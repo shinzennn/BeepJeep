@@ -1,0 +1,41 @@
+Build a mobile app regarding the pasted code, create it using react and tailwind css sticking to white and orange scheme, heres  a guide for other techinical stuffs, real-time GPS tracking system for the Beepjeep app that can be tested on real mobile devices. Use the following implementation details:
+
+1. Map Library: Use Leaflet.js (via react-leaflet) for the maps because it is open-source and requires no API keys.
+2. Real GPS Tracking: On the Driver Page, use the browser's native HTML5 Geolocation API (`navigator.geolocation.watchPosition`) to track the driver's real-time phone coordinates. 
+3. Real-Time Sync: Set up a WebSocket server (using Socket.io) or a real-time database backend so that whenever the driver's phone detects a location change, it broadcasts the new lat/lng to the backend.
+4. Commuter View: The Commuter Page must listen to these real-time backend updates and smoothly move the Driver's Jeepney marker across the Leaflet map.
+5. Proximity Alert: Write a function on the backend or commuter frontend that calculates the distance between the driver's live coordinates and the commuter's live coordinates. If they are within 100 meters, trigger a real push/browser notification on both devices.
+
+Please ensure the server can host this publicly so I can open the Replit web view URL on two separate smartphones to test it simultaneously.
+
+
+# Project Specification: Beepjeep
+
+## Overview
+Beepjeep is a modern jeepney tracking and management application designed for three user roles: Drivers, Commuters, and Admins. The app handles live location tracking, passenger/fare management, and financial reporting.
+
+## Visual & Design Guidelines
+*   **Color Palette:** Mainly White and Orange (Clean, modern transit aesthetic).
+*   **UI Style:** Simple, highly readable, and mobile-responsive for drivers and commuters on the go.
+
+---
+
+## Component & Page Requirements
+
+### 1. Login Component
+*   **Role Selection:** Clear option to log in or simulate access as an Admin, Driver, or Commuter.
+*   **Authentication:** Basic form fields (Username/Password or simplified profile switching for prototyping).
+
+### 2. Admin Page (Dashboard)
+*   **Live Fleet Map:** A real-time, interactive map display showing the simulated or exact coordinates of all active jeepneys on the road.
+*   **Financial & Boundary Reports:** A centralized dashboard aggregating daily fare collections, passenger breakdowns, and boundary metrics from all active drivers.
+
+### 3. Driver Page
+*   **Fare Tracker:** Interface allowing the driver to record passenger boardings based on type (e.g., Regular, Senior/Student discount).
+*   **Jeepney Capacity State:** Simple toggle or counter indicating if the jeepney is "Full" or has "Seats Available."
+*   **Earnings Report:** A personal summary showing daily income totals and passenger demand trends.
+
+### 4. Commuter Page
+*   **Live Jeepney Tracking:** Interactive map allowing the commuter to track live jeepney locations, view available routes, and check fixed fare costs.
+*   **Proximity Alerts (Passenger Visibility):** Dual-notification system that alerts the commuter when a jeepney is approaching their location, and simultaneously alerts the approaching driver of a waiting passenger.
+*   **Reporting & Feedback:** A simple rating and review system to report issues or rate the jeepney/driver experience.

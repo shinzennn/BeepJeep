@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "bUFqTvNE68Ny71ukfqzD0"
+uri = "file://artifacts/mobile/assets/images/icon.png"
+type = "image"
+title = "beepjeep app icon"
