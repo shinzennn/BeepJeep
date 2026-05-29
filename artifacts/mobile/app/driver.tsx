@@ -1,7 +1,13 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  Platform, Alert, Animated,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  Platform,
+  Alert,
+  Animated,
 } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -37,7 +43,9 @@ export default function DriverScreen() {
   const [tracking, setTracking] = useState(false);
   const [capacity, setCapacity] = useState<CapacityStatus>("available");
   const [fares, setFares] = useState<LocalFare[]>([]);
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
+    null,
+  );
   const locationSub = useRef<any>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -48,9 +56,17 @@ export default function DriverScreen() {
     if (tracking) {
       Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.3, duration: 700, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
-        ])
+          Animated.timing(pulseAnim, {
+            toValue: 1.3,
+            duration: 700,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 700,
+            useNativeDriver: true,
+          }),
+        ]),
       ).start();
     } else {
       pulseAnim.stopAnimation();
@@ -59,11 +75,18 @@ export default function DriverScreen() {
   }, [tracking]);
 
   const broadcastLocation = useCallback(
-    (lat: number, lng: number, cap: CapacityStatus, fareCount: number, fareTotal: number) => {
+    (
+      lat: number,
+      lng: number,
+      cap: CapacityStatus,
+      fareCount: number,
+      fareTotal: number,
+    ) => {
       socket?.emit("driver:location", {
         driverId: String(user!.id),
         driverName: user!.name,
-        lat, lng,
+        lat,
+        lng,
         status: cap,
         route: "Route 1",
         passengerCount: fareCount,
@@ -71,36 +94,66 @@ export default function DriverScreen() {
         lastUpdated: Date.now(),
       });
     },
-    [socket, user]
+    [socket, user],
   );
 
   const startTracking = useCallback(async () => {
     if (Platform.OS !== "web") {
-      const [fgPerm] = await Location.requestForegroundPermissionsAsync();
-      if (!fgPerm.granted) {
-        Alert.alert("Permission needed", "Location access is required for tracking.");
+      // FIXED: Changed [fgPerm] to { granted } to correctly destructure the object keys
+      const { granted } = await Location.requestForegroundPermissionsAsync();
+      if (!granted) {
+        Alert.alert(
+          "Permission needed",
+          "Location access is required for tracking.",
+        );
         return;
       }
+
       locationSub.current = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 5 },
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 3000,
+          distanceInterval: 5,
+        },
         (loc) => {
           const { latitude: lat, longitude: lng } = loc.coords;
           setCoords({ lat, lng });
           mapRef.current?.setUserLocation({ lat, lng }, true);
-          setFares((f) => { broadcastLocation(lat, lng, capacity, f.length, f.reduce((s, x) => s + x.amount, 0)); return f; });
-        }
+          setFares((f) => {
+            broadcastLocation(
+              lat,
+              lng,
+              capacity,
+              f.length,
+              f.reduce((s, x) => s + x.amount, 0),
+            );
+            return f;
+          });
+        },
       );
     } else {
-      if (!navigator.geolocation) { Alert.alert("GPS not available"); return; }
+      if (!navigator.geolocation) {
+        Alert.alert("GPS not available");
+        return;
+      }
       const id = navigator.geolocation.watchPosition(
         (pos) => {
           const { latitude: lat, longitude: lng } = pos.coords;
           setCoords({ lat, lng });
           mapRef.current?.setUserLocation({ lat, lng }, true);
-          setFares((f) => { broadcastLocation(lat, lng, capacity, f.length, f.reduce((s, x) => s + x.amount, 0)); return f; });
+          setFares((f) => {
+            broadcastLocation(
+              lat,
+              lng,
+              capacity,
+              f.length,
+              f.reduce((s, x) => s + x.amount, 0),
+            );
+            return f;
+          });
         },
         () => {},
-        { enableHighAccuracy: true, maximumAge: 3000 }
+        { enableHighAccuracy: true, maximumAge: 3000 },
       );
       locationSub.current = { _webId: id };
     }
@@ -122,15 +175,27 @@ export default function DriverScreen() {
   }, [socket, user]);
 
   async function addFare(type: "regular" | "student" | "senior") {
-    const record: LocalFare = { id: Date.now().toString(), type, amount: FARE_RATES[type], timestamp: Date.now() };
+    const record: LocalFare = {
+      id: Date.now().toString(),
+      type,
+      amount: FARE_RATES[type],
+      timestamp: Date.now(),
+    };
     setFares((prev) => {
       const next = [...prev, record];
-      socket?.emit("driver:fare", { driverId: String(user!.id), passengerCount: next.length, totalFare: next.reduce((s, f) => s + f.amount, 0) });
+      socket?.emit("driver:fare", {
+        driverId: String(user!.id),
+        passengerCount: next.length,
+        totalFare: next.reduce((s, f) => s + f.amount, 0),
+      });
       return next;
     });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
-      await apiJson("/fares", { method: "POST", body: JSON.stringify({ passengerType: type, amount: FARE_RATES[type] }) });
+      await apiJson("/fares", {
+        method: "POST",
+        body: JSON.stringify({ passengerType: type, amount: FARE_RATES[type] }),
+      });
     } catch {}
   }
 
@@ -138,14 +203,19 @@ export default function DriverScreen() {
     setFares((prev) => {
       if (!prev.length) return prev;
       const next = prev.slice(0, -1);
-      socket?.emit("driver:fare", { driverId: String(user!.id), passengerCount: next.length, totalFare: next.reduce((s, f) => s + f.amount, 0) });
+      socket?.emit("driver:fare", {
+        driverId: String(user!.id),
+        passengerCount: next.length,
+        totalFare: next.reduce((s, f) => s + f.amount, 0),
+      });
       return next;
     });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   }
 
   function toggleCapacity() {
-    const next: CapacityStatus = capacity === "available" ? "full" : "available";
+    const next: CapacityStatus =
+      capacity === "available" ? "full" : "available";
     setCapacity(next);
     Haptics.selectionAsync();
     socket?.emit("driver:status", { driverId: String(user!.id), status: next });
@@ -166,12 +236,23 @@ export default function DriverScreen() {
       <View style={s.header}>
         <View style={s.headerLeft}>
           <View style={s.avatar}>
-            <Text style={s.avatarText}>{user?.name?.[0]?.toUpperCase() ?? "D"}</Text>
+            <Text style={s.avatarText}>
+              {user?.name?.[0]?.toUpperCase() ?? "D"}
+            </Text>
           </View>
           <View>
             <Text style={s.headerName}>{user?.name}</Text>
             <View style={s.statusRow}>
-              <View style={[s.dot, { backgroundColor: connected ? colors.success : colors.mutedForeground }]} />
+              <View
+                style={[
+                  s.dot,
+                  {
+                    backgroundColor: connected
+                      ? colors.success
+                      : colors.mutedForeground,
+                  },
+                ]}
+              />
               <Text style={s.statusText}>{roleLabel}</Text>
             </View>
           </View>
@@ -179,7 +260,11 @@ export default function DriverScreen() {
         <View style={s.headerRight}>
           {isFleetDriver && (
             <View style={s.fleetBadge}>
-              <MaterialCommunityIcons name="bus-multiple" size={12} color={colors.primary} />
+              <MaterialCommunityIcons
+                name="bus-multiple"
+                size={12}
+                color={colors.primary}
+              />
               <Text style={s.fleetBadgeText}>Fleet</Text>
             </View>
           )}
@@ -194,48 +279,89 @@ export default function DriverScreen() {
         {coords && (
           <View style={s.coordBadge}>
             <Feather name="navigation" size={12} color={colors.primary} />
-            <Text style={s.coordText}>{coords.lat.toFixed(4)}, {coords.lng.toFixed(4)}</Text>
+            <Text style={s.coordText}>
+              {coords.lat.toFixed(4)}, {coords.lng.toFixed(4)}
+            </Text>
           </View>
         )}
       </View>
 
-      <ScrollView style={s.panel} contentContainerStyle={s.panelContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={s.panel}
+        contentContainerStyle={s.panelContent}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={s.controls}>
           <TouchableOpacity
             style={[s.trackBtn, tracking ? s.trackStop : s.trackStart]}
             onPress={tracking ? stopTracking : startTracking}
             activeOpacity={0.8}
           >
-            <Animated.View style={{ transform: [{ scale: tracking ? pulseAnim : 1 }] }}>
-              <Feather name={tracking ? "pause-circle" : "play-circle"} size={22} color="#fff" />
+            <Animated.View
+              style={{ transform: [{ scale: tracking ? pulseAnim : 1 }] }}
+            >
+              <Feather
+                name={tracking ? "pause-circle" : "play-circle"}
+                size={22}
+                color="#fff"
+              />
             </Animated.View>
-            <Text style={s.trackBtnText}>{tracking ? "Stop Tracking" : "Start Tracking"}</Text>
+            <Text style={s.trackBtnText}>
+              {tracking ? "Stop Tracking" : "Start Tracking"}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[s.capBtn, capacity === "full" ? s.capFull : s.capAvail]}
-            onPress={toggleCapacity} activeOpacity={0.8}
+            onPress={toggleCapacity}
+            activeOpacity={0.8}
           >
-            <MaterialCommunityIcons name={capacity === "full" ? "seat-passenger" : "seat"} size={22} color={capacity === "full" ? "#fff" : colors.primary} />
-            <Text style={[s.capBtnText, { color: capacity === "full" ? "#fff" : colors.primary }]}>{capacity === "full" ? "Full" : "Available"}</Text>
+            <MaterialCommunityIcons
+              name={capacity === "full" ? "seat-passenger" : "seat"}
+              size={22}
+              color={capacity === "full" ? "#fff" : colors.primary}
+            />
+            <Text
+              style={[
+                s.capBtnText,
+                { color: capacity === "full" ? "#fff" : colors.primary },
+              ]}
+            >
+              {capacity === "full" ? "Full" : "Available"}
+            </Text>
           </TouchableOpacity>
         </View>
 
         <View style={s.statsRow}>
           <View style={s.stat}>
-            <MaterialCommunityIcons name="account-group" size={22} color={colors.primary} />
+            <MaterialCommunityIcons
+              name="account-group"
+              size={22}
+              color={colors.primary}
+            />
             <Text style={s.statNum}>{totalPassengers}</Text>
             <Text style={s.statLabel}>Passengers</Text>
           </View>
           <View style={s.statDiv} />
           <View style={s.stat}>
-            <MaterialCommunityIcons name="cash" size={22} color={colors.success} />
-            <Text style={[s.statNum, { color: colors.success }]}>₱{totalEarnings}</Text>
+            <MaterialCommunityIcons
+              name="cash"
+              size={22}
+              color={colors.success}
+            />
+            <Text style={[s.statNum, { color: colors.success }]}>
+              ₱{totalEarnings}
+            </Text>
             <Text style={s.statLabel}>Earnings</Text>
           </View>
           <View style={s.statDiv} />
           <View style={s.stat}>
             <Feather name="clock" size={22} color={colors.mutedForeground} />
-            <Text style={s.statNum}>{new Date().toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}</Text>
+            <Text style={s.statNum}>
+              {new Date().toLocaleTimeString("en-PH", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </Text>
             <Text style={s.statLabel}>Session</Text>
           </View>
         </View>
@@ -243,15 +369,26 @@ export default function DriverScreen() {
         <Text style={s.fareTitle}>Add Passenger</Text>
         <View style={s.fareRow}>
           {(["regular", "student", "senior"] as const).map((type) => (
-            <TouchableOpacity key={type} style={s.fareBtn} onPress={() => addFare(type)} activeOpacity={0.75}>
+            <TouchableOpacity
+              key={type}
+              style={s.fareBtn}
+              onPress={() => addFare(type)}
+              activeOpacity={0.75}
+            >
               <Text style={s.fareBtnAmt}>₱{FARE_RATES[type]}</Text>
-              <Text style={s.fareBtnLabel}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
+              <Text style={s.fareBtnLabel}>
+                {type.charAt(0).toUpperCase() + type.slice(1)}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
 
         {fares.length > 0 && (
-          <TouchableOpacity style={s.undoBtn} onPress={removeLast} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={s.undoBtn}
+            onPress={removeLast}
+            activeOpacity={0.7}
+          >
             <Feather name="rotate-ccw" size={16} color={colors.destructive} />
             <Text style={s.undoBtnText}>Undo Last</Text>
           </TouchableOpacity>
@@ -264,8 +401,12 @@ export default function DriverScreen() {
               if (!count) return null;
               return (
                 <View key={type} style={s.breakdownRow}>
-                  <Text style={s.breakdownLabel}>{type.charAt(0).toUpperCase() + type.slice(1)} ×{count}</Text>
-                  <Text style={s.breakdownAmt}>₱{count * FARE_RATES[type]}</Text>
+                  <Text style={s.breakdownLabel}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)} ×{count}
+                  </Text>
+                  <Text style={s.breakdownAmt}>
+                    ₱{count * FARE_RATES[type]}
+                  </Text>
                 </View>
               );
             })}
@@ -279,46 +420,139 @@ export default function DriverScreen() {
 function makeStyles(c: ReturnType<typeof useColors>) {
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: c.background },
-    header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: c.border },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 20,
+      paddingVertical: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: c.border,
+    },
     headerLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
-    avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: c.primary, alignItems: "center", justifyContent: "center" },
+    avatar: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: c.primary,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     avatarText: { color: "#fff", fontWeight: "700", fontSize: 16 },
     headerName: { fontSize: 16, fontWeight: "700", color: c.foreground },
-    statusRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 2 },
+    statusRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      marginTop: 2,
+    },
     dot: { width: 7, height: 7, borderRadius: 4 },
     statusText: { fontSize: 12, color: c.mutedForeground },
     headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-    fleetBadge: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: c.secondary, borderRadius: 12, paddingHorizontal: 8, paddingVertical: 4 },
+    fleetBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      backgroundColor: c.secondary,
+      borderRadius: 12,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
     fleetBadgeText: { fontSize: 11, fontWeight: "700", color: c.primary },
     logoutBtn: { padding: 8 },
     mapWrap: { height: 200, position: "relative" },
     map: { flex: 1 },
-    coordBadge: { position: "absolute", bottom: 8, left: 10, flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
+    coordBadge: {
+      position: "absolute",
+      bottom: 8,
+      left: 10,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      backgroundColor: "rgba(255,255,255,0.9)",
+      borderRadius: 20,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
     coordText: { fontSize: 11, color: c.foreground, fontWeight: "600" },
     panel: { flex: 1 },
     panelContent: { padding: 20, gap: 16 },
     controls: { flexDirection: "row", gap: 12 },
-    trackBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", height: 50, borderRadius: 14, gap: 8 },
+    trackBtn: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      height: 50,
+      borderRadius: 14,
+      gap: 8,
+    },
     trackStart: { backgroundColor: c.primary },
     trackStop: { backgroundColor: "#EF4444" },
     trackBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-    capBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", height: 50, borderRadius: 14, gap: 8, borderWidth: 2, borderColor: c.primary },
+    capBtn: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      height: 50,
+      borderRadius: 14,
+      gap: 8,
+      borderWidth: 2,
+      borderColor: c.primary,
+    },
     capAvail: { backgroundColor: c.secondary },
     capFull: { backgroundColor: "#EF4444", borderColor: "#EF4444" },
     capBtnText: { fontWeight: "700", fontSize: 15 },
-    statsRow: { flexDirection: "row", backgroundColor: c.card, borderRadius: 16, padding: 16, alignItems: "center" },
+    statsRow: {
+      flexDirection: "row",
+      backgroundColor: c.card,
+      borderRadius: 16,
+      padding: 16,
+      alignItems: "center",
+    },
     stat: { flex: 1, alignItems: "center", gap: 4 },
     statNum: { fontSize: 20, fontWeight: "800", color: c.foreground },
     statLabel: { fontSize: 11, color: c.mutedForeground, fontWeight: "500" },
     statDiv: { width: 1, height: 40, backgroundColor: c.border },
-    fareTitle: { fontSize: 13, fontWeight: "700", color: c.mutedForeground, textTransform: "uppercase", letterSpacing: 0.5 },
+    fareTitle: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: c.mutedForeground,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    },
     fareRow: { flexDirection: "row", gap: 10 },
-    fareBtn: { flex: 1, height: 72, borderRadius: 16, backgroundColor: c.secondary, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: c.primary },
+    fareBtn: {
+      flex: 1,
+      height: 72,
+      borderRadius: 16,
+      backgroundColor: c.secondary,
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 2,
+      borderColor: c.primary,
+    },
     fareBtnAmt: { fontSize: 22, fontWeight: "800", color: c.primary },
     fareBtnLabel: { fontSize: 12, color: c.secondaryForeground, marginTop: 2 },
-    undoBtn: { flexDirection: "row", alignItems: "center", gap: 8, alignSelf: "center", paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: c.destructive },
+    undoBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      alignSelf: "center",
+      paddingVertical: 8,
+      paddingHorizontal: 16,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: c.destructive,
+    },
     undoBtnText: { color: c.destructive, fontSize: 14, fontWeight: "600" },
-    breakdown: { backgroundColor: c.card, borderRadius: 14, padding: 14, gap: 8 },
+    breakdown: {
+      backgroundColor: c.card,
+      borderRadius: 14,
+      padding: 14,
+      gap: 8,
+    },
     breakdownRow: { flexDirection: "row", justifyContent: "space-between" },
     breakdownLabel: { fontSize: 14, color: c.foreground },
     breakdownAmt: { fontSize: 14, fontWeight: "700", color: c.foreground },
