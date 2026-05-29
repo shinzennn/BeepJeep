@@ -49,7 +49,7 @@ export default function DriverScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
-  const { socket, connected } = useSocket();
+  const { socket, connected, commuterLocations } = useSocket();
   const mapRef = useRef<MapWebViewRef>(null);
 
   const isFleetDriver = user?.role === "fleet_driver";
@@ -57,25 +57,37 @@ export default function DriverScreen() {
 
   const [tracking, setTracking] = useState(false);
   const [capacity, setCapacity] = useState<CapacityStatus>("available");
+  // fares = for earnings breakdown only (not affected by unboard)
   const [fares, setFares] = useState<LocalFare[]>([]);
+  // passengerCount = actual riders on board (decrements on unboard)
+  const [passengerCount, setPassengerCount] = useState(0);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showFareEdit, setShowFareEdit] = useState(false);
+  // Only independent drivers get dynamic fare rates
   const [fareRates, setFareRates] = useState<FareRates>(DEFAULT_RATES);
-  const [editRates, setEditRates] = useState<{ regular: string; student: string; senior: string }>({ regular: "", student: "", senior: "" });
+  const [editRates, setEditRates] = useState({ regular: "", student: "", senior: "" });
   const [savingFares, setSavingFares] = useState(false);
 
   const locationSub = useRef<any>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const mapHeight = useRef(new Animated.Value(200)).current;
 
-  const totalPassengers = fares.length;
   const totalEarnings = fares.reduce((s, f) => s + f.amount, 0);
 
+  // Only load fare settings for independent drivers
   useEffect(() => {
-    loadFareSettings();
-  }, []);
+    if (!isFleetDriver) loadFareSettings();
+  }, [isFleetDriver]);
+
+  // Push commuter locations to map whenever they change
+  useEffect(() => {
+    if (mapReady) {
+      mapRef.current?.setCommuterLocations(commuterLocations);
+    }
+  }, [commuterLocations, mapReady]);
 
   useEffect(() => {
     if (tracking) {
@@ -111,14 +123,14 @@ export default function DriverScreen() {
   }
 
   const broadcastLocation = useCallback(
-    (lat: number, lng: number, cap: CapacityStatus, fareCount: number, fareTotal: number) => {
+    (lat: number, lng: number, cap: CapacityStatus, pCount: number, fareTotal: number) => {
       socket?.emit("driver:location", {
         driverId: String(user!.id),
         driverName: user!.name,
         lat, lng,
         status: cap,
-        route: "Route 1",
-        passengerCount: fareCount,
+        route: user?.route ?? "Route 1",
+        passengerCount: pCount,
         totalFare: fareTotal,
         lastUpdated: Date.now(),
       });
@@ -139,9 +151,12 @@ export default function DriverScreen() {
           const { latitude: lat, longitude: lng } = loc.coords;
           setCoords({ lat, lng });
           mapRef.current?.setUserLocation({ lat, lng }, true);
-          setFares((f) => {
-            broadcastLocation(lat, lng, capacity, f.length, f.reduce((s, x) => s + x.amount, 0));
-            return f;
+          setPassengerCount((pc) => {
+            setFares((f) => {
+              broadcastLocation(lat, lng, capacity, pc, f.reduce((s, x) => s + x.amount, 0));
+              return f;
+            });
+            return pc;
           });
         },
       );
@@ -152,9 +167,12 @@ export default function DriverScreen() {
           const { latitude: lat, longitude: lng } = pos.coords;
           setCoords({ lat, lng });
           mapRef.current?.setUserLocation({ lat, lng }, true);
-          setFares((f) => {
-            broadcastLocation(lat, lng, capacity, f.length, f.reduce((s, x) => s + x.amount, 0));
-            return f;
+          setPassengerCount((pc) => {
+            setFares((f) => {
+              broadcastLocation(lat, lng, capacity, pc, f.reduce((s, x) => s + x.amount, 0));
+              return f;
+            });
+            return pc;
           });
         },
         () => {},
@@ -180,17 +198,26 @@ export default function DriverScreen() {
   }, [socket, user]);
 
   async function addFare(type: "regular" | "student" | "senior") {
-    const amt = type === "regular" ? fareRates.regularFare : type === "student" ? fareRates.studentFare : fareRates.seniorFare;
+    const amt =
+      type === "regular" ? fareRates.regularFare
+      : type === "student" ? fareRates.studentFare
+      : fareRates.seniorFare;
     const record: LocalFare = { id: Date.now().toString(), type, amount: amt, timestamp: Date.now() };
+
     setFares((prev) => {
       const next = [...prev, record];
-      socket?.emit("driver:fare", {
-        driverId: String(user!.id),
-        passengerCount: next.length,
-        totalFare: next.reduce((s, f) => s + f.amount, 0),
+      setPassengerCount((pc) => {
+        const newCount = pc + 1;
+        socket?.emit("driver:fare", {
+          driverId: String(user!.id),
+          passengerCount: newCount,
+          totalFare: next.reduce((s, f) => s + f.amount, 0),
+        });
+        return newCount;
       });
       return next;
     });
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       await apiJson("/fares", {
@@ -201,15 +228,14 @@ export default function DriverScreen() {
   }
 
   function unboardPassenger() {
-    setFares((prev) => {
-      if (!prev.length) return prev;
-      const next = prev.slice(0, -1);
-      socket?.emit("driver:fare", {
-        driverId: String(user!.id),
-        passengerCount: next.length,
-        totalFare: next.reduce((s, f) => s + f.amount, 0),
-      });
-      return next;
+    if (passengerCount === 0) return;
+    const newCount = passengerCount - 1;
+    setPassengerCount(newCount);
+    // Earnings (fares) are NOT changed — driver keeps the money
+    socket?.emit("driver:fare", {
+      driverId: String(user!.id),
+      passengerCount: newCount,
+      totalFare: totalEarnings,
     });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   }
@@ -255,7 +281,7 @@ export default function DriverScreen() {
     }
     setSavingFares(true);
     try {
-      const data = await apiJson<FareRates>("/fare-settings", {
+      await apiJson<FareRates>("/fare-settings", {
         method: "PUT",
         body: JSON.stringify({ regularFare: regular, studentFare: student, seniorFare: senior }),
       });
@@ -275,6 +301,7 @@ export default function DriverScreen() {
 
   return (
     <View style={[s.root, { paddingTop: topPad, paddingBottom: bottomPad }]}>
+      {/* Header */}
       <View style={s.header}>
         <TouchableOpacity style={s.headerLeft} onPress={() => setShowProfile(true)} activeOpacity={0.8}>
           <View style={s.avatar}>
@@ -301,12 +328,23 @@ export default function DriverScreen() {
         </View>
       </View>
 
+      {/* Collapsible Map */}
       <Animated.View style={[s.mapWrap, { height: mapHeight }]}>
-        <MapWebView ref={mapRef} style={s.map} />
+        <MapWebView
+          ref={mapRef}
+          style={s.map}
+          onMapReady={() => setMapReady(true)}
+        />
         {coords && (
           <View style={s.coordBadge}>
             <Feather name="navigation" size={12} color={colors.primary} />
             <Text style={s.coordText}>{coords.lat.toFixed(4)}, {coords.lng.toFixed(4)}</Text>
+          </View>
+        )}
+        {commuterLocations.length > 0 && (
+          <View style={s.commuterBadge}>
+            <MaterialCommunityIcons name="map-marker-radius" size={13} color="#8B5CF6" />
+            <Text style={s.commuterBadgeText}>{commuterLocations.length} requesting</Text>
           </View>
         )}
         <TouchableOpacity style={s.mapExpandBtn} onPress={toggleMap} activeOpacity={0.8}>
@@ -314,7 +352,20 @@ export default function DriverScreen() {
         </TouchableOpacity>
       </Animated.View>
 
+      {/* Map legend */}
+      <View style={s.mapLegend}>
+        <View style={s.legendItem}>
+          <View style={[s.ldot, { backgroundColor: colors.primary }]} />
+          <Text style={s.legendText}>You</Text>
+        </View>
+        <View style={s.legendItem}>
+          <View style={[s.ldot, { backgroundColor: "#8B5CF6" }]} />
+          <Text style={s.legendText}>Commuter</Text>
+        </View>
+      </View>
+
       <ScrollView style={s.panel} contentContainerStyle={s.panelContent} showsVerticalScrollIndicator={false}>
+        {/* Controls */}
         <View style={s.controls}>
           <TouchableOpacity
             style={[s.trackBtn, tracking ? s.trackStop : s.trackStart]}
@@ -342,11 +393,12 @@ export default function DriverScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Stats */}
         <View style={s.statsRow}>
           <View style={s.stat}>
             <MaterialCommunityIcons name="account-group" size={22} color={colors.primary} />
-            <Text style={s.statNum}>{totalPassengers}</Text>
-            <Text style={s.statLabel}>Passengers</Text>
+            <Text style={s.statNum}>{passengerCount}</Text>
+            <Text style={s.statLabel}>On Board</Text>
           </View>
           <View style={s.statDiv} />
           <View style={s.stat}>
@@ -362,10 +414,14 @@ export default function DriverScreen() {
           </View>
         </View>
 
+        {/* Fare buttons */}
         <Text style={s.fareTitle}>Add Passenger</Text>
         <View style={s.fareRow}>
           {(["regular", "student", "senior"] as const).map((type) => {
-            const amt = type === "regular" ? fareRates.regularFare : type === "student" ? fareRates.studentFare : fareRates.seniorFare;
+            const amt =
+              type === "regular" ? fareRates.regularFare
+              : type === "student" ? fareRates.studentFare
+              : fareRates.seniorFare;
             return (
               <TouchableOpacity
                 key={type}
@@ -380,22 +436,28 @@ export default function DriverScreen() {
           })}
         </View>
 
+        {/* Unboard — does NOT deduct earnings */}
         <TouchableOpacity
-          style={[s.unboardBtn, fares.length === 0 && s.btnDisabled]}
+          style={[s.unboardBtn, passengerCount === 0 && s.btnDisabled]}
           onPress={unboardPassenger}
-          disabled={fares.length === 0}
+          disabled={passengerCount === 0}
           activeOpacity={0.75}
         >
           <MaterialCommunityIcons name="account-minus" size={20} color="#fff" />
           <Text style={s.unboardBtnText}>Passenger Unboard</Text>
         </TouchableOpacity>
 
+        {/* Earnings breakdown */}
         {fares.length > 0 && (
           <View style={s.breakdown}>
+            <Text style={s.breakdownHeader}>Collected Fares</Text>
             {(["regular", "student", "senior"] as const).map((type) => {
               const count = fares.filter((f) => f.type === type).length;
               if (!count) return null;
-              const amt = type === "regular" ? fareRates.regularFare : type === "student" ? fareRates.studentFare : fareRates.seniorFare;
+              const amt =
+                type === "regular" ? fareRates.regularFare
+                : type === "student" ? fareRates.studentFare
+                : fareRates.seniorFare;
               return (
                 <View key={type} style={s.breakdownRow}>
                   <Text style={s.breakdownLabel}>{type.charAt(0).toUpperCase() + type.slice(1)} ×{count}</Text>
@@ -423,10 +485,11 @@ export default function DriverScreen() {
               </View>
             </View>
 
+            {/* Only independent drivers can manage their own fare settings */}
             {!isFleetDriver && (
               <View style={s.fareSection}>
                 <View style={s.fareSectionHeader}>
-                  <Text style={s.fareSectionTitle}>Fare Settings</Text>
+                  <Text style={s.fareSectionTitle}>My Fare Settings</Text>
                   <TouchableOpacity onPress={openFareEdit} style={s.editFareBtn}>
                     <Feather name="edit-2" size={14} color={colors.primary} />
                     <Text style={s.editFareBtnText}>Edit</Text>
@@ -456,47 +519,49 @@ export default function DriverScreen() {
         </View>
       </Modal>
 
-      {/* EDIT FARE MODAL (independent driver) */}
-      <Modal visible={showFareEdit} transparent animationType="slide">
-        <View style={s.modalOverlay}>
-          <View style={s.modal}>
-            <Text style={s.modalTitle}>Edit Fare Rates</Text>
-            <Text style={s.modalSub}>Set your own fare pricing</Text>
-            {[
-              { label: "Regular Fare (₱)", key: "regular" as const },
-              { label: "Student Fare (₱)", key: "student" as const },
-              { label: "Senior Fare (₱)", key: "senior" as const },
-            ].map(({ label, key }) => (
-              <View key={key} style={s.fareInputRow}>
-                <Text style={s.fareInputLabel}>{label}</Text>
-                <TextInput
-                  style={s.fareInput}
-                  value={editRates[key]}
-                  onChangeText={(v) => setEditRates((p) => ({ ...p, [key]: v }))}
-                  keyboardType="numeric"
-                  placeholder="0"
-                  placeholderTextColor={colors.mutedForeground}
-                />
+      {/* EDIT FARE MODAL — independent driver only */}
+      {!isFleetDriver && (
+        <Modal visible={showFareEdit} transparent animationType="slide">
+          <View style={s.modalOverlay}>
+            <View style={s.modal}>
+              <Text style={s.modalTitle}>Edit Fare Rates</Text>
+              <Text style={s.modalSub}>Set your own fare pricing</Text>
+              {[
+                { label: "Regular Fare (₱)", key: "regular" as const },
+                { label: "Student Fare (₱)", key: "student" as const },
+                { label: "Senior Fare (₱)", key: "senior" as const },
+              ].map(({ label, key }) => (
+                <View key={key} style={s.fareInputRow}>
+                  <Text style={s.fareInputLabel}>{label}</Text>
+                  <TextInput
+                    style={s.fareInput}
+                    value={editRates[key]}
+                    onChangeText={(v) => setEditRates((p) => ({ ...p, [key]: v }))}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor={colors.mutedForeground}
+                  />
+                </View>
+              ))}
+              <View style={s.modalBtns}>
+                <TouchableOpacity style={s.modalCancel} onPress={() => setShowFareEdit(false)}>
+                  <Text style={s.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.modalConfirm, savingFares && s.btnDisabled]}
+                  onPress={saveFareSettings}
+                  disabled={savingFares}
+                >
+                  {savingFares
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={s.modalConfirmText}>Save</Text>
+                  }
+                </TouchableOpacity>
               </View>
-            ))}
-            <View style={s.modalBtns}>
-              <TouchableOpacity style={s.modalCancel} onPress={() => setShowFareEdit(false)}>
-                <Text style={s.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.modalConfirm, savingFares && s.btnDisabled]}
-                onPress={saveFareSettings}
-                disabled={savingFares}
-              >
-                {savingFares
-                  ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={s.modalConfirmText}>Save</Text>
-                }
-              </TouchableOpacity>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -532,12 +597,27 @@ function makeStyles(c: ReturnType<typeof useColors>) {
       paddingHorizontal: 10, paddingVertical: 4,
     },
     coordText: { fontSize: 11, color: c.foreground, fontWeight: "600" },
+    commuterBadge: {
+      position: "absolute", bottom: 8, right: 50,
+      flexDirection: "row", alignItems: "center", gap: 5,
+      backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 20,
+      paddingHorizontal: 10, paddingVertical: 4,
+    },
+    commuterBadgeText: { fontSize: 11, color: "#8B5CF6", fontWeight: "700" },
     mapExpandBtn: {
       position: "absolute", top: 8, right: 10,
       backgroundColor: "#fff", borderRadius: 20, padding: 6,
       shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
       shadowOpacity: 0.15, shadowRadius: 4, elevation: 4,
     },
+    mapLegend: {
+      flexDirection: "row", alignItems: "center", gap: 12,
+      paddingHorizontal: 16, paddingVertical: 6,
+      backgroundColor: c.secondary, borderBottomWidth: 1, borderBottomColor: c.border,
+    },
+    legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
+    ldot: { width: 8, height: 8, borderRadius: 4 },
+    legendText: { fontSize: 11, color: c.foreground, fontWeight: "600" },
     panel: { flex: 1 },
     panelContent: { padding: 20, gap: 16 },
     controls: { flexDirection: "row", gap: 12 },
@@ -558,7 +638,7 @@ function makeStyles(c: ReturnType<typeof useColors>) {
     capBtnText: { fontWeight: "700", fontSize: 15 },
     statsRow: {
       flexDirection: "row", backgroundColor: c.card, borderRadius: 16,
-      padding: 16, alignItems: "center",
+      padding: 16, alignItems: "center", borderWidth: 1, borderColor: c.border,
     },
     stat: { flex: 1, alignItems: "center", gap: 4 },
     statNum: { fontSize: 20, fontWeight: "800", color: c.foreground },
@@ -581,11 +661,18 @@ function makeStyles(c: ReturnType<typeof useColors>) {
       gap: 8, height: 48, borderRadius: 14, backgroundColor: "#EF4444",
     },
     unboardBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-    breakdown: { backgroundColor: c.card, borderRadius: 14, padding: 14, gap: 8 },
-    breakdownRow: { flexDirection: "row", justifyContent: "space-between" },
-    breakdownLabel: { fontSize: 14, color: c.foreground },
-    breakdownAmt: { fontSize: 14, fontWeight: "700", color: c.foreground },
     btnDisabled: { opacity: 0.4 },
+    breakdown: {
+      backgroundColor: c.card, borderRadius: 14,
+      padding: 14, gap: 8, borderWidth: 1, borderColor: c.border,
+    },
+    breakdownHeader: {
+      fontSize: 12, fontWeight: "700", color: c.mutedForeground,
+      textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4,
+    },
+    breakdownRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+    breakdownLabel: { fontSize: 14, color: c.foreground },
+    breakdownAmt: { fontSize: 14, fontWeight: "700", color: c.primary },
     modalOverlay: {
       flex: 1, backgroundColor: "rgba(0,0,0,0.5)",
       alignItems: "center", justifyContent: "flex-end",
@@ -595,6 +682,8 @@ function makeStyles(c: ReturnType<typeof useColors>) {
       borderTopLeftRadius: 24, borderTopRightRadius: 24,
       padding: 24, paddingBottom: 40,
     },
+    modalTitle: { fontSize: 18, fontWeight: "800", color: c.foreground, marginBottom: 4 },
+    modalSub: { fontSize: 13, color: c.mutedForeground, marginBottom: 16 },
     profileHeader: { alignItems: "center", gap: 8, marginBottom: 20 },
     profileAvatar: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center" },
     profileAvatarText: { color: "#fff", fontWeight: "800", fontSize: 28 },
@@ -607,22 +696,16 @@ function makeStyles(c: ReturnType<typeof useColors>) {
     },
     roleBadgeText: { fontSize: 12, fontWeight: "700", color: c.primary },
     fareSection: {
-      backgroundColor: c.background, borderRadius: 16, padding: 16, marginBottom: 16,
+      backgroundColor: c.secondary, borderRadius: 14, padding: 14, marginBottom: 16,
     },
-    fareSectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-    fareSectionTitle: { fontSize: 13, fontWeight: "700", color: c.mutedForeground, textTransform: "uppercase", letterSpacing: 0.5 },
+    fareSectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
+    fareSectionTitle: { fontSize: 13, fontWeight: "700", color: c.foreground },
     editFareBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
     editFareBtnText: { fontSize: 13, color: c.primary, fontWeight: "600" },
-    fareRatesRow: { flexDirection: "row", gap: 8 },
-    fareRateItem: {
-      flex: 1, backgroundColor: c.card, borderRadius: 12, padding: 10, alignItems: "center",
-    },
-    fareRateLabel: { fontSize: 11, color: c.mutedForeground, fontWeight: "600" },
-    fareRateValue: { fontSize: 18, fontWeight: "800", color: c.primary, marginTop: 4 },
-    modalClose: { backgroundColor: c.secondary, borderRadius: 14, padding: 14, alignItems: "center" },
-    modalCloseText: { color: c.primary, fontWeight: "700", fontSize: 15 },
-    modalTitle: { fontSize: 18, fontWeight: "800", color: c.foreground, marginBottom: 4 },
-    modalSub: { fontSize: 14, color: c.mutedForeground, marginBottom: 16 },
+    fareRatesRow: { flexDirection: "row", justifyContent: "space-between" },
+    fareRateItem: { alignItems: "center" },
+    fareRateLabel: { fontSize: 11, color: c.mutedForeground, marginBottom: 2 },
+    fareRateValue: { fontSize: 16, fontWeight: "800", color: c.primary },
     fareInputRow: { marginBottom: 12 },
     fareInputLabel: { fontSize: 13, fontWeight: "600", color: c.mutedForeground, marginBottom: 6 },
     fareInput: {
@@ -635,5 +718,7 @@ function makeStyles(c: ReturnType<typeof useColors>) {
     modalCancelText: { color: c.mutedForeground, fontWeight: "700", fontSize: 15 },
     modalConfirm: { flex: 1, backgroundColor: c.primary, borderRadius: 14, padding: 14, alignItems: "center" },
     modalConfirmText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+    modalClose: { backgroundColor: c.secondary, borderRadius: 14, padding: 14, alignItems: "center" },
+    modalCloseText: { color: c.primary, fontWeight: "700", fontSize: 15 },
   });
 }

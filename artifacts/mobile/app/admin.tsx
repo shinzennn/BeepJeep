@@ -70,6 +70,8 @@ export default function AdminScreen() {
   const [fleetsLoading, setFleetsLoading] = useState(false);
   const [expandedFleet, setExpandedFleet] = useState<number | null>(null);
   const [fleetDrivers, setFleetDrivers] = useState<Record<number, FleetDriver[]>>({});
+  // IDs of all drivers belonging to this admin's fleets (for map filtering)
+  const [fleetDriverIds, setFleetDriverIds] = useState<Set<number>>(new Set());
   const [showCreateFleet, setShowCreateFleet] = useState(false);
   const [newFleetName, setNewFleetName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -95,12 +97,21 @@ export default function AdminScreen() {
   const topPad = Platform.OS === "web" ? 0 : insets.top;
   const bottomPad = Platform.OS === "web" ? 0 : insets.bottom;
 
-  useEffect(() => {
-    if (mapReady) mapRef.current?.setDrivers(drivers);
-  }, [mapReady, drivers]);
+  // Only show this admin's fleet drivers on the map
+  const fleetOnlyDrivers = fleetDriverIds.size > 0
+    ? drivers.filter((d) => fleetDriverIds.has(parseInt(d.driverId)))
+    : [];
 
   useEffect(() => {
-    if (tab === "fleet") loadFleets();
+    if (mapReady) mapRef.current?.setDrivers(fleetOnlyDrivers);
+  }, [mapReady, fleetOnlyDrivers]);
+
+  // Always load fleet driver IDs on mount so the map tab can filter correctly
+  useEffect(() => {
+    loadFleets();
+  }, []);
+
+  useEffect(() => {
     if (tab === "reports") loadSummary();
   }, [tab]);
 
@@ -109,6 +120,18 @@ export default function AdminScreen() {
     try {
       const data = await apiJson<Fleet[]>("/fleets");
       setFleets(data);
+      // Load all fleet driver IDs for map filtering
+      const allIds = new Set<number>();
+      await Promise.all(
+        data.map(async (fleet) => {
+          try {
+            const driversData = await apiJson<FleetDriver[]>(`/fleets/${fleet.id}/drivers`);
+            driversData.forEach((d) => allIds.add(d.id));
+            setFleetDrivers((prev) => ({ ...prev, [fleet.id]: driversData }));
+          } catch {}
+        })
+      );
+      setFleetDriverIds(allIds);
     } catch (e: any) {
       Alert.alert("Error", e.message);
     } finally {
@@ -287,7 +310,7 @@ export default function AdminScreen() {
   }
 
   const s = makeStyles(colors);
-  const activeDrivers = drivers.filter((d) => d.status !== "offline");
+  const activeDrivers = fleetOnlyDrivers.filter((d) => d.status !== "offline");
   const currentRatings = ratingsFleetDriverId ? driverRatings[ratingsFleetDriverId] : null;
 
   return (
