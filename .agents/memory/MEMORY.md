@@ -1,0 +1,3 @@
+- [Beepjeep fare settings](fare-settings.md) — dynamic fares stored per driver (independent) or per fleet (admin); fetched on driver screen load.
+- [Beepjeep ratings scope](ratings-scope.md) — commuters rate fleet drivers only; admin sees ratings scoped to their own fleets via /ratings/driver/:id.
+- [Beepjeep reports scope](reports-scope.md) — admin reports/exports filter by the admin's own fleet IDs, not all drivers globally.

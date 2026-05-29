@@ -14,7 +14,16 @@ interface DriverData {
   lastUpdated: number;
 }
 
+interface CommuterLocation {
+  commuterId: string;
+  commuterName: string;
+  lat: number;
+  lng: number;
+  announcedAt: number;
+}
+
 const activeDrivers = new Map<string, DriverData>();
+const activeCommuters = new Map<string, CommuterLocation>();
 
 export function initSocket(httpServer: HttpServer) {
   const io = new Server(httpServer, {
@@ -48,11 +57,7 @@ export function initSocket(httpServer: HttpServer) {
 
     socket.on(
       "driver:fare",
-      (data: {
-        driverId: string;
-        passengerCount: number;
-        totalFare: number;
-      }) => {
+      (data: { driverId: string; passengerCount: number; totalFare: number }) => {
         const driver = activeDrivers.get(data.driverId);
         if (driver) {
           driver.passengerCount = data.passengerCount;
@@ -65,6 +70,16 @@ export function initSocket(httpServer: HttpServer) {
     socket.on("driver:offline", (data: { driverId: string }) => {
       activeDrivers.delete(data.driverId);
       io.emit("driver:offline", data);
+    });
+
+    socket.on("commuter:location", (data: CommuterLocation) => {
+      const updated = { ...data, announcedAt: Date.now() };
+      activeCommuters.set(data.commuterId, updated);
+      io.emit("commuter:location", updated);
+      setTimeout(() => {
+        activeCommuters.delete(data.commuterId);
+        io.emit("commuter:removed", { commuterId: data.commuterId });
+      }, 120000);
     });
 
     socket.on("disconnect", () => {
