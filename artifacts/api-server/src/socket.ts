@@ -26,6 +26,9 @@ const activeDrivers = new Map<string, DriverData>();
 const activeCommuters = new Map<string, CommuterLocation>();
 const commuterTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
+let _io: Server | null = null;
+export function getIo(): Server | null { return _io; }
+
 function clearCommuterTimeout(commuterId: string) {
   const t = commuterTimeouts.get(commuterId);
   if (t) {
@@ -39,6 +42,8 @@ export function initSocket(httpServer: HttpServer) {
     path: "/api/socket.io",
     cors: { origin: "*", methods: ["GET", "POST"] },
   });
+
+  _io = io;
 
   io.on("connection", (socket) => {
     logger.info({ socketId: socket.id }, "Client connected");
@@ -81,13 +86,11 @@ export function initSocket(httpServer: HttpServer) {
       io.emit("driver:offline", data);
     });
 
-    // Commuter announces their position — auto-expires after 120s
     socket.on("commuter:location", (data: CommuterLocation) => {
       const updated = { ...data, announcedAt: Date.now() };
       activeCommuters.set(data.commuterId, updated);
       io.emit("commuter:location", updated);
 
-      // Cancel any existing expiry for this commuter and set a fresh one
       clearCommuterTimeout(data.commuterId);
       const t = setTimeout(() => {
         activeCommuters.delete(data.commuterId);
@@ -97,7 +100,6 @@ export function initSocket(httpServer: HttpServer) {
       commuterTimeouts.set(data.commuterId, t);
     });
 
-    // Commuter explicitly stops sharing their position
     socket.on("commuter:remove", (data: { commuterId: string }) => {
       clearCommuterTimeout(data.commuterId);
       activeCommuters.delete(data.commuterId);

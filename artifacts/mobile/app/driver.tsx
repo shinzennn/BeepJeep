@@ -93,8 +93,19 @@ export default function DriverScreen() {
   const totalEarnings = fares.reduce((s, f) => s + f.amount, 0);
 
   useEffect(() => {
-    if (!isFleetDriver) loadFareSettings();
-  }, [isFleetDriver]);
+    loadFareSettings();
+  }, []);
+
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (data: { fleetId?: number; regularFare: number; studentFare: number; seniorFare: number }) => {
+      if (isFleetDriver && user?.fleetId === data.fleetId) {
+        setFareRates({ regularFare: data.regularFare, studentFare: data.studentFare, seniorFare: data.seniorFare });
+      }
+    };
+    socket.on("fare:updated", handler);
+    return () => { socket.off("fare:updated", handler); };
+  }, [socket, isFleetDriver, user]);
 
   useEffect(() => {
     if (mapReady) mapRef.current?.setCommuterLocations(commuterLocations);

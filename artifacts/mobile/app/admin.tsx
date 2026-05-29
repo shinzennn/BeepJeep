@@ -11,7 +11,7 @@ import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
 import { useSocket } from "@/context/SocketContext";
 import MapWebView, { MapWebViewRef } from "@/components/MapWebView";
-import { apiJson, API_BASE } from "@/lib/api";
+import { apiJson, apiFetch, API_BASE } from "@/lib/api";
 
 type AdminTab = "map" | "fleet" | "reports";
 
@@ -279,9 +279,7 @@ export default function AdminScreen() {
     try {
       const url = `${API_BASE}/reports/export?format=${format}&days=30`;
       if (Platform.OS === "web") {
-        const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await apiFetch(`/reports/export?format=${format}&days=30`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data?.error ?? `Export failed: ${res.status}`);
@@ -296,7 +294,7 @@ export default function AdminScreen() {
         document.body.removeChild(a);
         URL.revokeObjectURL(blobUrl);
       } else {
-        await Linking.openURL(`${url}&token=${encodeURIComponent(token)}`);
+        await Linking.openURL(`${API_BASE}/reports/export?format=${format}&days=30&token=${encodeURIComponent(token)}`);
       }
     } catch (e: any) {
       Alert.alert("Export failed", e.message);
