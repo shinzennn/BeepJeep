@@ -1,45 +1,44 @@
 import React, { useState } from "react";
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
 } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
-import { UserRole } from "@/types";
-
-const ROLES: { role: UserRole; label: string; desc: string; icon: string }[] = [
-  { role: "driver", label: "Driver", desc: "Track & manage fare", icon: "bus" },
-  { role: "commuter", label: "Commuter", desc: "Track your jeepney", icon: "map-marker-radius" },
-  { role: "admin", label: "Admin", desc: "Fleet overview", icon: "shield-account" },
-];
+import { useAuth } from "@/context/AuthContext";
 
 export default function LoginScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { login } = useAuth();
-  const [name, setName] = useState("");
-  const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  function handleLogin() {
-    if (!selectedRole) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    login(selectedRole, name);
-    router.replace(`/${selectedRole}` as "/driver" | "/commuter" | "/admin");
+  const topPad = Platform.OS === "web" ? 40 : insets.top;
+  const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
+
+  async function handleLogin() {
+    if (!username.trim() || !password) return;
+    setError("");
+    setLoading(true);
+    try {
+      await login(username.trim(), password);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: any) {
+      setError(e.message ?? "Login failed");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setLoading(false);
+    }
   }
 
   const s = makeStyles(colors);
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
-  const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
 
   return (
     <KeyboardAvoidingView
@@ -48,68 +47,89 @@ export default function LoginScreen() {
     >
       <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
         <View style={s.brand}>
-          <View style={s.logoWrap}>
-            <MaterialCommunityIcons name="bus-multiple" size={36} color={colors.primaryForeground} />
+          <View style={s.logo}>
+            <MaterialCommunityIcons name="bus-multiple" size={36} color="#fff" />
           </View>
           <Text style={s.appName}>BeepJeep</Text>
           <Text style={s.tagline}>Real-time jeepney tracking</Text>
         </View>
 
         <View style={s.card}>
-          <Text style={s.sectionLabel}>Your Name</Text>
-          <View style={s.inputWrap}>
-            <Feather name="user" size={18} color={colors.mutedForeground} style={s.inputIcon} />
-            <TextInput
-              style={s.input}
-              placeholder="Enter your name"
-              placeholderTextColor={colors.mutedForeground}
-              value={name}
-              onChangeText={setName}
-              returnKeyType="done"
-            />
+          <Text style={s.cardTitle}>Welcome back</Text>
+          <Text style={s.cardSub}>Sign in to continue</Text>
+
+          {!!error && (
+            <View style={s.errorBox}>
+              <Feather name="alert-circle" size={15} color={colors.destructive} />
+              <Text style={s.errorText}>{error}</Text>
+            </View>
+          )}
+
+          <View style={s.field}>
+            <Text style={s.label}>Username</Text>
+            <View style={s.inputWrap}>
+              <Feather name="user" size={18} color={colors.mutedForeground} style={s.inputIcon} />
+              <TextInput
+                style={s.input}
+                placeholder="Enter username"
+                placeholderTextColor={colors.mutedForeground}
+                value={username}
+                onChangeText={setUsername}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="next"
+              />
+            </View>
           </View>
 
-          <Text style={[s.sectionLabel, { marginTop: 20 }]}>Select Role</Text>
-          <View style={s.roles}>
-            {ROLES.map(({ role, label, desc, icon }) => {
-              const active = selectedRole === role;
-              return (
-                <TouchableOpacity
-                  key={role}
-                  style={[s.roleBtn, active && s.roleBtnActive]}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    Haptics.selectionAsync();
-                    setSelectedRole(role);
-                  }}
-                >
-                  <View style={[s.roleIcon, active && s.roleIconActive]}>
-                    <MaterialCommunityIcons
-                      name={icon as any}
-                      size={22}
-                      color={active ? colors.primaryForeground : colors.primary}
-                    />
-                  </View>
-                  <View style={s.roleText}>
-                    <Text style={[s.roleLabel, active && s.roleLabelActive]}>{label}</Text>
-                    <Text style={s.roleDesc}>{desc}</Text>
-                  </View>
-                  {active && (
-                    <Feather name="check-circle" size={18} color={colors.primary} />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
+          <View style={s.field}>
+            <Text style={s.label}>Password</Text>
+            <View style={s.inputWrap}>
+              <Feather name="lock" size={18} color={colors.mutedForeground} style={s.inputIcon} />
+              <TextInput
+                style={s.input}
+                placeholder="Enter password"
+                placeholderTextColor={colors.mutedForeground}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPw}
+                returnKeyType="done"
+                onSubmitEditing={handleLogin}
+              />
+              <TouchableOpacity onPress={() => setShowPw((v) => !v)} style={s.eyeBtn}>
+                <Feather name={showPw ? "eye-off" : "eye"} size={18} color={colors.mutedForeground} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           <TouchableOpacity
-            style={[s.loginBtn, !selectedRole && s.loginBtnDisabled]}
-            activeOpacity={0.8}
+            style={[s.loginBtn, (!username.trim() || !password || loading) && s.btnDisabled]}
             onPress={handleLogin}
-            disabled={!selectedRole}
+            activeOpacity={0.8}
+            disabled={!username.trim() || !password || loading}
           >
-            <Text style={s.loginBtnText}>Continue</Text>
-            <Feather name="arrow-right" size={18} color="#fff" />
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Text style={s.loginBtnText}>Sign In</Text>
+                <Feather name="arrow-right" size={18} color="#fff" />
+              </>
+            )}
+          </TouchableOpacity>
+
+          <View style={s.dividerRow}>
+            <View style={s.divider} />
+            <Text style={s.dividerText}>or</Text>
+            <View style={s.divider} />
+          </View>
+
+          <TouchableOpacity
+            style={s.signupBtn}
+            onPress={() => router.push("/signup")}
+            activeOpacity={0.8}
+          >
+            <Text style={s.signupBtnText}>Create an account</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -120,57 +140,49 @@ export default function LoginScreen() {
 function makeStyles(colors: ReturnType<typeof useColors>) {
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.primary },
-    scroll: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 20, paddingVertical: 24 },
-    brand: { alignItems: "center", marginBottom: 32 },
-    logoWrap: {
+    scroll: { flexGrow: 1, justifyContent: "center", padding: 20 },
+    brand: { alignItems: "center", marginBottom: 28 },
+    logo: {
       width: 72, height: 72, borderRadius: 36,
       backgroundColor: "rgba(255,255,255,0.25)",
-      alignItems: "center", justifyContent: "center",
-      marginBottom: 12,
+      alignItems: "center", justifyContent: "center", marginBottom: 12,
     },
     appName: { fontSize: 32, fontWeight: "800", color: "#fff", letterSpacing: 0.5 },
     tagline: { fontSize: 14, color: "rgba(255,255,255,0.8)", marginTop: 4 },
     card: {
-      backgroundColor: colors.background,
-      borderRadius: 20,
-      padding: 24,
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.12,
-      shadowRadius: 24,
-      elevation: 12,
+      backgroundColor: colors.background, borderRadius: 20, padding: 24,
+      shadowColor: "#000", shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.12, shadowRadius: 24, elevation: 12,
     },
-    sectionLabel: { fontSize: 13, fontWeight: "600", color: colors.mutedForeground, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 },
+    cardTitle: { fontSize: 22, fontWeight: "800", color: colors.foreground },
+    cardSub: { fontSize: 14, color: colors.mutedForeground, marginTop: 4, marginBottom: 20 },
+    errorBox: {
+      flexDirection: "row", alignItems: "center", gap: 8,
+      backgroundColor: "#FEF2F2", borderRadius: 10, padding: 12, marginBottom: 16,
+    },
+    errorText: { fontSize: 14, color: colors.destructive, flex: 1 },
+    field: { marginBottom: 16 },
+    label: { fontSize: 13, fontWeight: "600", color: colors.mutedForeground, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4 },
     inputWrap: {
       flexDirection: "row", alignItems: "center",
-      backgroundColor: colors.muted, borderRadius: 12,
-      paddingHorizontal: 14, height: 50,
+      backgroundColor: colors.muted, borderRadius: 12, paddingHorizontal: 14, height: 50,
     },
     inputIcon: { marginRight: 10 },
     input: { flex: 1, fontSize: 16, color: colors.foreground },
-    roles: { gap: 10 },
-    roleBtn: {
-      flexDirection: "row", alignItems: "center",
-      backgroundColor: colors.muted, borderRadius: 14,
-      padding: 14, borderWidth: 2, borderColor: "transparent",
-    },
-    roleBtnActive: { borderColor: colors.primary, backgroundColor: colors.secondary },
-    roleIcon: {
-      width: 44, height: 44, borderRadius: 22,
-      backgroundColor: colors.secondary,
-      alignItems: "center", justifyContent: "center", marginRight: 14,
-    },
-    roleIconActive: { backgroundColor: colors.primary },
-    roleText: { flex: 1 },
-    roleLabel: { fontSize: 16, fontWeight: "700", color: colors.foreground },
-    roleLabelActive: { color: colors.primary },
-    roleDesc: { fontSize: 13, color: colors.mutedForeground, marginTop: 2 },
+    eyeBtn: { padding: 4 },
     loginBtn: {
-      marginTop: 24, height: 54, borderRadius: 14,
-      backgroundColor: colors.primary,
-      flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+      height: 54, borderRadius: 14, backgroundColor: colors.primary,
+      flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 4,
     },
-    loginBtnDisabled: { opacity: 0.45 },
+    btnDisabled: { opacity: 0.45 },
     loginBtnText: { fontSize: 17, fontWeight: "700", color: "#fff" },
+    dividerRow: { flexDirection: "row", alignItems: "center", gap: 10, marginVertical: 20 },
+    divider: { flex: 1, height: 1, backgroundColor: colors.border },
+    dividerText: { fontSize: 13, color: colors.mutedForeground },
+    signupBtn: {
+      height: 50, borderRadius: 14, borderWidth: 2, borderColor: colors.primary,
+      alignItems: "center", justifyContent: "center",
+    },
+    signupBtnText: { fontSize: 16, fontWeight: "700", color: colors.primary },
   });
 }
