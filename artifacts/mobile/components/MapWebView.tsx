@@ -116,7 +116,10 @@ const MAP_HTML = `<!DOCTYPE html>
       else if(msg.type==='SET_DRIVERS') msg.drivers.forEach(updateDriver);
       else if(msg.type==='USER_LOCATION') setUserLoc(msg.lat,msg.lng,msg.panTo);
       else if(msg.type==='PAN_TO') map.setView([msg.lat,msg.lng],msg.zoom||15);
-      else if(msg.type==='SET_COMMUTERS') msg.commuters.forEach(updateCommuter);
+      else if(msg.type==='SET_COMMUTERS'){
+        Object.keys(commuterMarkers).forEach(function(id){ removeCommuter(id); });
+        msg.commuters.forEach(updateCommuter);
+      }
       else if(msg.type==='UPDATE_COMMUTER') updateCommuter(msg.data);
       else if(msg.type==='REMOVE_COMMUTER') removeCommuter(msg.commuterId);
     }catch(err){}

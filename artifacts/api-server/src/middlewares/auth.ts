@@ -68,3 +68,31 @@ export function tokenFromQuery(
     res.status(401).json({ error: "Invalid or expired token" });
   }
 }
+
+export function authFlexible(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): void {
+  const auth = req.headers.authorization;
+  if (auth?.startsWith("Bearer ")) {
+    try {
+      req.user = verifyToken(auth.slice(7));
+      return next();
+    } catch {
+      res.status(401).json({ error: "Invalid or expired token" });
+      return;
+    }
+  }
+  const queryToken = req.query["token"] as string | undefined;
+  if (queryToken) {
+    try {
+      req.user = verifyToken(queryToken);
+      return next();
+    } catch {
+      res.status(401).json({ error: "Invalid or expired token" });
+      return;
+    }
+  }
+  res.status(401).json({ error: "Unauthorized" });
+}

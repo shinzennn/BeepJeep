@@ -277,8 +277,27 @@ export default function AdminScreen() {
     }
     setExporting(format);
     try {
-      const url = `${API_BASE}/reports/export?format=${format}&token=${token}&days=30`;
-      await Linking.openURL(url);
+      const url = `${API_BASE}/reports/export?format=${format}&days=30`;
+      if (Platform.OS === "web") {
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.error ?? `Export failed: ${res.status}`);
+        }
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `beepjeep-report-${Date.now()}.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+      } else {
+        await Linking.openURL(`${url}&token=${encodeURIComponent(token)}`);
+      }
     } catch (e: any) {
       Alert.alert("Export failed", e.message);
     } finally {

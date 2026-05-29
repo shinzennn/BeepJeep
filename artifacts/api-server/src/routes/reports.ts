@@ -2,11 +2,11 @@ import { Router } from "express";
 import * as XLSX from "xlsx";
 import { db, fareRecordsTable, usersTable, fleetsTable } from "@workspace/db";
 import { eq, gte, and, inArray } from "drizzle-orm";
-import { tokenFromQuery, authMiddleware, requireRole, type AuthRequest } from "../middlewares/auth";
+import { authFlexible, authMiddleware, requireRole, type AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
-router.get("/reports/export", tokenFromQuery, async (req: AuthRequest, res) => {
+router.get("/reports/export", authFlexible, async (req: AuthRequest, res) => {
   if (req.user!.role !== "admin") {
     res.status(403).json({ error: "Admin only" });
     return;
