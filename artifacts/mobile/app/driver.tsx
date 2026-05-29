@@ -25,6 +25,7 @@ import { apiJson } from "@/lib/api";
 import { FARE_RATES } from "@/types";
 
 type CapacityStatus = "available" | "full";
+type ProfileTab = "profile" | "history" | "ratings";
 
 interface LocalFare {
   id: string;
@@ -37,6 +38,18 @@ interface FareRates {
   regularFare: number;
   studentFare: number;
   seniorFare: number;
+}
+
+interface DriverStats {
+  today: { passengers: number; earnings: number; regular: number; student: number; senior: number };
+  week: { passengers: number; earnings: number };
+  allTime: { passengers: number; earnings: number };
+  recentFares: { id: number; passengerType: string; amount: number; createdAt: string }[];
+  ratings: {
+    average: number;
+    count: number;
+    list: { id: number; commuterName: string; rating: number; comment: string | null; createdAt: string }[];
+  };
 }
 
 const DEFAULT_RATES: FareRates = {
@@ -57,19 +70,21 @@ export default function DriverScreen() {
 
   const [tracking, setTracking] = useState(false);
   const [capacity, setCapacity] = useState<CapacityStatus>("available");
-  // fares = for earnings breakdown only (not affected by unboard)
   const [fares, setFares] = useState<LocalFare[]>([]);
-  // passengerCount = actual riders on board (decrements on unboard)
   const [passengerCount, setPassengerCount] = useState(0);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+
   const [showProfile, setShowProfile] = useState(false);
+  const [profileTab, setProfileTab] = useState<ProfileTab>("profile");
   const [showFareEdit, setShowFareEdit] = useState(false);
-  // Only independent drivers get dynamic fare rates
   const [fareRates, setFareRates] = useState<FareRates>(DEFAULT_RATES);
   const [editRates, setEditRates] = useState({ regular: "", student: "", senior: "" });
   const [savingFares, setSavingFares] = useState(false);
+
+  const [driverStats, setDriverStats] = useState<DriverStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const locationSub = useRef<any>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -77,16 +92,12 @@ export default function DriverScreen() {
 
   const totalEarnings = fares.reduce((s, f) => s + f.amount, 0);
 
-  // Only load fare settings for independent drivers
   useEffect(() => {
     if (!isFleetDriver) loadFareSettings();
   }, [isFleetDriver]);
 
-  // Push commuter locations to map whenever they change
   useEffect(() => {
-    if (mapReady) {
-      mapRef.current?.setCommuterLocations(commuterLocations);
-    }
+    if (mapReady) mapRef.current?.setCommuterLocations(commuterLocations);
   }, [commuterLocations, mapReady]);
 
   useEffect(() => {
@@ -108,6 +119,21 @@ export default function DriverScreen() {
       const data = await apiJson<FareRates>("/fare-settings");
       setFareRates(data);
     } catch {}
+  }
+
+  async function loadDriverStats() {
+    setStatsLoading(true);
+    try {
+      const data = await apiJson<DriverStats>("/driver/stats");
+      setDriverStats(data);
+    } catch {}
+    finally { setStatsLoading(false); }
+  }
+
+  function openProfile() {
+    setProfileTab("profile");
+    setShowProfile(true);
+    if (!isFleetDriver) loadDriverStats();
   }
 
   function toggleMap() {
@@ -231,13 +257,36 @@ export default function DriverScreen() {
     if (passengerCount === 0) return;
     const newCount = passengerCount - 1;
     setPassengerCount(newCount);
-    // Earnings (fares) are NOT changed — driver keeps the money
     socket?.emit("driver:fare", {
       driverId: String(user!.id),
       passengerCount: newCount,
       totalFare: totalEarnings,
     });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  }
+
+  function resetSession() {
+    Alert.alert(
+      "Reset Session",
+      "This will clear the current passenger count and earnings for this session. Fares already recorded are kept in history.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: () => {
+            setFares([]);
+            setPassengerCount(0);
+            socket?.emit("driver:fare", {
+              driverId: String(user!.id),
+              passengerCount: 0,
+              totalFare: 0,
+            });
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          },
+        },
+      ],
+    );
   }
 
   function toggleCapacity() {
@@ -303,7 +352,7 @@ export default function DriverScreen() {
     <View style={[s.root, { paddingTop: topPad, paddingBottom: bottomPad }]}>
       {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity style={s.headerLeft} onPress={() => setShowProfile(true)} activeOpacity={0.8}>
+        <TouchableOpacity style={s.headerLeft} onPress={openProfile} activeOpacity={0.8}>
           <View style={s.avatar}>
             <Text style={s.avatarText}>{user?.name?.[0]?.toUpperCase() ?? "D"}</Text>
           </View>
@@ -330,11 +379,7 @@ export default function DriverScreen() {
 
       {/* Collapsible Map */}
       <Animated.View style={[s.mapWrap, { height: mapHeight }]}>
-        <MapWebView
-          ref={mapRef}
-          style={s.map}
-          onMapReady={() => setMapReady(true)}
-        />
+        <MapWebView ref={mapRef} style={s.map} onMapReady={() => setMapReady(true)} />
         {coords && (
           <View style={s.coordBadge}>
             <Feather name="navigation" size={12} color={colors.primary} />
@@ -436,16 +481,27 @@ export default function DriverScreen() {
           })}
         </View>
 
-        {/* Unboard — does NOT deduct earnings */}
-        <TouchableOpacity
-          style={[s.unboardBtn, passengerCount === 0 && s.btnDisabled]}
-          onPress={unboardPassenger}
-          disabled={passengerCount === 0}
-          activeOpacity={0.75}
-        >
-          <MaterialCommunityIcons name="account-minus" size={20} color="#fff" />
-          <Text style={s.unboardBtnText}>Passenger Unboard</Text>
-        </TouchableOpacity>
+        {/* Action row: Unboard + Reset */}
+        <View style={s.actionRow}>
+          <TouchableOpacity
+            style={[s.unboardBtn, passengerCount === 0 && s.btnDisabled]}
+            onPress={unboardPassenger}
+            disabled={passengerCount === 0}
+            activeOpacity={0.75}
+          >
+            <MaterialCommunityIcons name="account-minus" size={18} color="#fff" />
+            <Text style={s.unboardBtnText}>Unboard</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.resetBtn, (fares.length === 0 && passengerCount === 0) && s.btnDisabled]}
+            onPress={resetSession}
+            disabled={fares.length === 0 && passengerCount === 0}
+            activeOpacity={0.75}
+          >
+            <MaterialCommunityIcons name="refresh" size={18} color={colors.destructive} />
+            <Text style={s.resetBtnText}>Clear Session</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Earnings breakdown */}
         {fares.length > 0 && (
@@ -469,50 +525,190 @@ export default function DriverScreen() {
         )}
       </ScrollView>
 
-      {/* PROFILE MODAL */}
+      {/* PROFILE MODAL — tabs for independent drivers */}
       <Modal visible={showProfile} transparent animationType="slide">
         <View style={s.modalOverlay}>
           <View style={s.modal}>
-            <View style={s.profileHeader}>
+            {/* Avatar + name always shown */}
+            <View style={s.profileTop}>
               <View style={[s.profileAvatar, { backgroundColor: colors.primary }]}>
                 <Text style={s.profileAvatarText}>{user?.name?.[0]?.toUpperCase() ?? "D"}</Text>
               </View>
-              <Text style={s.profileName}>{user?.name}</Text>
-              <Text style={s.profileUsername}>@{user?.username}</Text>
-              <View style={s.roleBadge}>
-                <MaterialCommunityIcons name="bus" size={13} color={colors.primary} />
-                <Text style={s.roleBadgeText}>{roleLabel}</Text>
+              <View style={s.profileTopInfo}>
+                <Text style={s.profileName}>{user?.name}</Text>
+                <Text style={s.profileUsername}>@{user?.username}</Text>
+                <View style={s.roleBadge}>
+                  <MaterialCommunityIcons name="bus" size={11} color={colors.primary} />
+                  <Text style={s.roleBadgeText}>{roleLabel}</Text>
+                </View>
               </View>
             </View>
 
-            {/* Only independent drivers can manage their own fare settings */}
+            {/* Tab bar — only for independent drivers */}
             {!isFleetDriver && (
-              <View style={s.fareSection}>
-                <View style={s.fareSectionHeader}>
-                  <Text style={s.fareSectionTitle}>My Fare Settings</Text>
-                  <TouchableOpacity onPress={openFareEdit} style={s.editFareBtn}>
-                    <Feather name="edit-2" size={14} color={colors.primary} />
-                    <Text style={s.editFareBtnText}>Edit</Text>
+              <View style={s.profileTabBar}>
+                {(["profile", "history", "ratings"] as ProfileTab[]).map((t) => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[s.profileTabItem, profileTab === t && s.profileTabItemActive]}
+                    onPress={() => setProfileTab(t)}
+                  >
+                    <Text style={[s.profileTabLabel, profileTab === t && s.profileTabLabelActive]}>
+                      {t === "profile" ? "Profile" : t === "history" ? "History" : "Ratings"}
+                    </Text>
                   </TouchableOpacity>
-                </View>
-                <View style={s.fareRatesRow}>
-                  <View style={s.fareRateItem}>
-                    <Text style={s.fareRateLabel}>Regular</Text>
-                    <Text style={s.fareRateValue}>₱{fareRates.regularFare}</Text>
-                  </View>
-                  <View style={s.fareRateItem}>
-                    <Text style={s.fareRateLabel}>Student</Text>
-                    <Text style={s.fareRateValue}>₱{fareRates.studentFare}</Text>
-                  </View>
-                  <View style={s.fareRateItem}>
-                    <Text style={s.fareRateLabel}>Senior</Text>
-                    <Text style={s.fareRateValue}>₱{fareRates.seniorFare}</Text>
-                  </View>
-                </View>
+                ))}
               </View>
             )}
 
-            <TouchableOpacity style={s.modalClose} onPress={() => setShowProfile(false)}>
+            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+              {/* PROFILE TAB */}
+              {(profileTab === "profile" || isFleetDriver) && (
+                <>
+                  {!isFleetDriver && (
+                    <View style={s.fareSection}>
+                      <View style={s.fareSectionHeader}>
+                        <Text style={s.fareSectionTitle}>My Fare Settings</Text>
+                        <TouchableOpacity onPress={openFareEdit} style={s.editFareBtn}>
+                          <Feather name="edit-2" size={14} color={colors.primary} />
+                          <Text style={s.editFareBtnText}>Edit</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={s.fareRatesRow}>
+                        <View style={s.fareRateItem}>
+                          <Text style={s.fareRateLabel}>Regular</Text>
+                          <Text style={s.fareRateValue}>₱{fareRates.regularFare}</Text>
+                        </View>
+                        <View style={s.fareRateItem}>
+                          <Text style={s.fareRateLabel}>Student</Text>
+                          <Text style={s.fareRateValue}>₱{fareRates.studentFare}</Text>
+                        </View>
+                        <View style={s.fareRateItem}>
+                          <Text style={s.fareRateLabel}>Senior</Text>
+                          <Text style={s.fareRateValue}>₱{fareRates.seniorFare}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  )}
+                </>
+              )}
+
+              {/* HISTORY TAB */}
+              {profileTab === "history" && !isFleetDriver && (
+                <>
+                  {statsLoading ? (
+                    <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
+                  ) : driverStats ? (
+                    <>
+                      <View style={s.statsGrid}>
+                        <View style={s.statBlock}>
+                          <Text style={s.statBlockLabel}>Today</Text>
+                          <Text style={[s.statBlockVal, { color: colors.primary }]}>₱{driverStats.today.earnings.toFixed(0)}</Text>
+                          <Text style={s.statBlockSub}>{driverStats.today.passengers} passengers</Text>
+                        </View>
+                        <View style={s.statBlock}>
+                          <Text style={s.statBlockLabel}>This Week</Text>
+                          <Text style={[s.statBlockVal, { color: colors.success }]}>₱{driverStats.week.earnings.toFixed(0)}</Text>
+                          <Text style={s.statBlockSub}>{driverStats.week.passengers} passengers</Text>
+                        </View>
+                        <View style={s.statBlock}>
+                          <Text style={s.statBlockLabel}>All Time</Text>
+                          <Text style={[s.statBlockVal, { color: "#8B5CF6" }]}>₱{driverStats.allTime.earnings.toFixed(0)}</Text>
+                          <Text style={s.statBlockSub}>{driverStats.allTime.passengers} passengers</Text>
+                        </View>
+                      </View>
+
+                      <Text style={s.breakdownSectionTitle}>Today's Breakdown</Text>
+                      {[
+                        { label: "Regular", count: driverStats.today.regular, color: colors.primary },
+                        { label: "Student", count: driverStats.today.student, color: colors.success },
+                        { label: "Senior", count: driverStats.today.senior, color: "#F59E0B" },
+                      ].map(({ label, count, color }) => (
+                        <View key={label} style={s.breakdownTypeRow}>
+                          <View style={[s.breakdownTypeDot, { backgroundColor: color }]} />
+                          <Text style={s.breakdownTypeLabel}>{label}</Text>
+                          <Text style={[s.breakdownTypeCount, { color }]}>{count}</Text>
+                        </View>
+                      ))}
+
+                      {driverStats.recentFares.length > 0 && (
+                        <>
+                          <Text style={[s.breakdownSectionTitle, { marginTop: 14 }]}>Recent (Today)</Text>
+                          {driverStats.recentFares.slice(0, 10).map((f) => (
+                            <View key={f.id} style={s.fareHistoryRow}>
+                              <View style={[s.fareHistoryDot, {
+                                backgroundColor: f.passengerType === "regular" ? colors.primary
+                                  : f.passengerType === "student" ? colors.success : "#F59E0B"
+                              }]} />
+                              <Text style={s.fareHistoryType}>{f.passengerType.charAt(0).toUpperCase() + f.passengerType.slice(1)}</Text>
+                              <Text style={s.fareHistoryAmt}>₱{f.amount}</Text>
+                              <Text style={s.fareHistoryTime}>
+                                {new Date(f.createdAt).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}
+                              </Text>
+                            </View>
+                          ))}
+                        </>
+                      )}
+
+                      <TouchableOpacity style={s.refreshStatsBtn} onPress={loadDriverStats}>
+                        <Feather name="refresh-cw" size={13} color={colors.primary} />
+                        <Text style={s.refreshStatsBtnText}>Refresh</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <Text style={s.noDataText}>No data available yet</Text>
+                  )}
+                </>
+              )}
+
+              {/* RATINGS TAB */}
+              {profileTab === "ratings" && !isFleetDriver && (
+                <>
+                  {statsLoading ? (
+                    <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
+                  ) : driverStats ? (
+                    <>
+                      <View style={s.ratingsSummary}>
+                        <Text style={s.ratingsAvgBig}>{driverStats.ratings.average.toFixed(1)}</Text>
+                        <View style={s.ratingStarsRow}>
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <Feather
+                              key={star}
+                              name="star"
+                              size={20}
+                              color={star <= Math.round(driverStats.ratings.average) ? "#F59E0B" : colors.border}
+                            />
+                          ))}
+                        </View>
+                        <Text style={s.ratingsCountText}>{driverStats.ratings.count} review{driverStats.ratings.count !== 1 ? "s" : ""}</Text>
+                      </View>
+
+                      {driverStats.ratings.list.length === 0 ? (
+                        <Text style={s.noDataText}>No ratings yet</Text>
+                      ) : (
+                        driverStats.ratings.list.map((r) => (
+                          <View key={r.id} style={s.ratingItem}>
+                            <View style={s.ratingItemHeader}>
+                              <Text style={s.ratingCommuterName}>{r.commuterName}</Text>
+                              <View style={s.ratingStarsSmall}>
+                                {[1, 2, 3, 4, 5].map((star) => (
+                                  <Feather key={star} name="star" size={12} color={star <= r.rating ? "#F59E0B" : colors.border} />
+                                ))}
+                              </View>
+                            </View>
+                            {r.comment ? <Text style={s.ratingComment}>{r.comment}</Text> : null}
+                          </View>
+                        ))
+                      )}
+                    </>
+                  ) : (
+                    <Text style={s.noDataText}>No data available yet</Text>
+                  )}
+                </>
+              )}
+            </ScrollView>
+
+            <TouchableOpacity style={[s.modalClose, { marginTop: 16 }]} onPress={() => setShowProfile(false)}>
               <Text style={s.modalCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
@@ -656,11 +852,18 @@ function makeStyles(c: ReturnType<typeof useColors>) {
     },
     fareBtnAmt: { fontSize: 22, fontWeight: "800", color: c.primary },
     fareBtnLabel: { fontSize: 12, color: c.secondaryForeground, marginTop: 2 },
+    actionRow: { flexDirection: "row", gap: 10 },
     unboardBtn: {
-      flexDirection: "row", alignItems: "center", justifyContent: "center",
-      gap: 8, height: 48, borderRadius: 14, backgroundColor: "#EF4444",
+      flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
+      gap: 6, height: 46, borderRadius: 14, backgroundColor: "#EF4444",
     },
-    unboardBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+    unboardBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+    resetBtn: {
+      flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
+      gap: 6, height: 46, borderRadius: 14, backgroundColor: c.secondary,
+      borderWidth: 1.5, borderColor: c.destructive,
+    },
+    resetBtnText: { color: c.destructive, fontWeight: "700", fontSize: 14 },
     btnDisabled: { opacity: 0.4 },
     breakdown: {
       backgroundColor: c.card, borderRadius: 14,
@@ -684,20 +887,26 @@ function makeStyles(c: ReturnType<typeof useColors>) {
     },
     modalTitle: { fontSize: 18, fontWeight: "800", color: c.foreground, marginBottom: 4 },
     modalSub: { fontSize: 13, color: c.mutedForeground, marginBottom: 16 },
-    profileHeader: { alignItems: "center", gap: 8, marginBottom: 20 },
-    profileAvatar: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center" },
-    profileAvatarText: { color: "#fff", fontWeight: "800", fontSize: 28 },
-    profileName: { fontSize: 20, fontWeight: "800", color: c.foreground },
-    profileUsername: { fontSize: 14, color: c.mutedForeground },
+    profileTop: { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 16 },
+    profileAvatar: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center" },
+    profileAvatarText: { color: "#fff", fontWeight: "800", fontSize: 22 },
+    profileTopInfo: { flex: 1, gap: 2 },
+    profileName: { fontSize: 18, fontWeight: "800", color: c.foreground },
+    profileUsername: { fontSize: 13, color: c.mutedForeground },
     roleBadge: {
-      flexDirection: "row", alignItems: "center", gap: 5,
-      backgroundColor: c.secondary, borderRadius: 12,
-      paddingHorizontal: 10, paddingVertical: 5, marginTop: 4,
+      flexDirection: "row", alignItems: "center", gap: 4,
+      backgroundColor: c.secondary, borderRadius: 10,
+      paddingHorizontal: 8, paddingVertical: 4, alignSelf: "flex-start", marginTop: 2,
     },
-    roleBadgeText: { fontSize: 12, fontWeight: "700", color: c.primary },
-    fareSection: {
-      backgroundColor: c.secondary, borderRadius: 14, padding: 14, marginBottom: 16,
+    roleBadgeText: { fontSize: 11, fontWeight: "700", color: c.primary },
+    profileTabBar: {
+      flexDirection: "row", borderBottomWidth: 1, borderBottomColor: c.border, marginBottom: 16,
     },
+    profileTabItem: { flex: 1, alignItems: "center", paddingVertical: 10 },
+    profileTabItemActive: { borderBottomWidth: 2, borderBottomColor: c.primary },
+    profileTabLabel: { fontSize: 13, fontWeight: "600", color: c.mutedForeground },
+    profileTabLabelActive: { color: c.primary },
+    fareSection: { backgroundColor: c.secondary, borderRadius: 14, padding: 14, marginBottom: 8 },
     fareSectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
     fareSectionTitle: { fontSize: 13, fontWeight: "700", color: c.foreground },
     editFareBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
@@ -706,6 +915,45 @@ function makeStyles(c: ReturnType<typeof useColors>) {
     fareRateItem: { alignItems: "center" },
     fareRateLabel: { fontSize: 11, color: c.mutedForeground, marginBottom: 2 },
     fareRateValue: { fontSize: 16, fontWeight: "800", color: c.primary },
+    statsGrid: { flexDirection: "row", gap: 8, marginBottom: 14 },
+    statBlock: {
+      flex: 1, backgroundColor: c.secondary, borderRadius: 12, padding: 10,
+      alignItems: "center", gap: 2,
+    },
+    statBlockLabel: { fontSize: 10, fontWeight: "700", color: c.mutedForeground, textTransform: "uppercase" },
+    statBlockVal: { fontSize: 18, fontWeight: "800" },
+    statBlockSub: { fontSize: 10, color: c.mutedForeground },
+    breakdownSectionTitle: {
+      fontSize: 11, fontWeight: "700", color: c.mutedForeground,
+      textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6,
+    },
+    breakdownTypeRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 5 },
+    breakdownTypeDot: { width: 8, height: 8, borderRadius: 4 },
+    breakdownTypeLabel: { flex: 1, fontSize: 13, color: c.foreground },
+    breakdownTypeCount: { fontSize: 13, fontWeight: "700" },
+    fareHistoryRow: {
+      flexDirection: "row", alignItems: "center", gap: 8,
+      paddingVertical: 5, borderTopWidth: 1, borderTopColor: c.border,
+    },
+    fareHistoryDot: { width: 7, height: 7, borderRadius: 4 },
+    fareHistoryType: { flex: 1, fontSize: 13, color: c.foreground },
+    fareHistoryAmt: { fontSize: 13, fontWeight: "700", color: c.primary },
+    fareHistoryTime: { fontSize: 12, color: c.mutedForeground, marginLeft: 6 },
+    refreshStatsBtn: {
+      flexDirection: "row", alignItems: "center", justifyContent: "center",
+      gap: 6, paddingVertical: 10, marginTop: 8,
+    },
+    refreshStatsBtnText: { fontSize: 13, color: c.primary, fontWeight: "600" },
+    noDataText: { textAlign: "center", color: c.mutedForeground, paddingVertical: 20, fontSize: 14 },
+    ratingsSummary: { alignItems: "center", gap: 4, paddingVertical: 12 },
+    ratingsAvgBig: { fontSize: 44, fontWeight: "800", color: "#F59E0B" },
+    ratingStarsRow: { flexDirection: "row", gap: 4 },
+    ratingsCountText: { fontSize: 13, color: c.mutedForeground },
+    ratingItem: { borderTopWidth: 1, borderTopColor: c.border, paddingVertical: 10, gap: 4 },
+    ratingItemHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+    ratingCommuterName: { fontSize: 13, fontWeight: "700", color: c.foreground },
+    ratingStarsSmall: { flexDirection: "row", gap: 2 },
+    ratingComment: { fontSize: 12, color: c.mutedForeground },
     fareInputRow: { marginBottom: 12 },
     fareInputLabel: { fontSize: 13, fontWeight: "600", color: c.mutedForeground, marginBottom: 6 },
     fareInput: {

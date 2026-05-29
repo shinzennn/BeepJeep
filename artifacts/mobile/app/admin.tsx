@@ -12,7 +12,6 @@ import { useAuth } from "@/context/AuthContext";
 import { useSocket } from "@/context/SocketContext";
 import MapWebView, { MapWebViewRef } from "@/components/MapWebView";
 import { apiJson, API_BASE } from "@/lib/api";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type AdminTab = "map" | "fleet" | "reports";
 
@@ -57,7 +56,7 @@ interface FareRates {
 export default function AdminScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { user, logout } = useAuth();
+  const { user, logout, token } = useAuth();
   const { drivers, connected } = useSocket();
   const mapRef = useRef<MapWebViewRef>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -272,10 +271,13 @@ export default function AdminScreen() {
   }
 
   async function exportReport(format: "xlsx" | "csv") {
+    if (!token) {
+      Alert.alert("Not authenticated", "Please log in again.");
+      return;
+    }
     setExporting(format);
     try {
-      const t = await AsyncStorage.getItem("bj_token");
-      const url = `${API_BASE}/reports/export?format=${format}&token=${t}&days=30`;
+      const url = `${API_BASE}/reports/export?format=${format}&token=${token}&days=30`;
       await Linking.openURL(url);
     } catch (e: any) {
       Alert.alert("Export failed", e.message);

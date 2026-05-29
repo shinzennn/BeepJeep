@@ -46,7 +46,8 @@ export default function CommuterScreen() {
   const [selectedRating, setSelectedRating] = useState(0);
   const [ratingComment, setRatingComment] = useState("");
   const [submittingRating, setSubmittingRating] = useState(false);
-  const [announcingPosition, setAnnouncingPosition] = useState(false);
+  // Persistent sharing toggle — true means location is actively shared
+  const [isSharing, setIsSharing] = useState(false);
 
   const alertAnim = useRef(new Animated.Value(0)).current;
   const panelHeight = useRef(new Animated.Value(160)).current;
@@ -60,7 +61,14 @@ export default function CommuterScreen() {
 
   useEffect(() => {
     startLocationWatch();
-    return () => stopLocationWatch();
+    return () => {
+      // Clean up location watch
+      stopLocationWatch();
+      // If sharing, remove commuter marker from all driver maps
+      if (socket && user) {
+        socket.emit("commuter:remove", { commuterId: String(user.id) });
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -142,7 +150,6 @@ export default function CommuterScreen() {
       Alert.alert("Location unavailable", "Wait for GPS to be ready.");
       return;
     }
-    setAnnouncingPosition(true);
     socket.emit("commuter:location", {
       commuterId: String(user!.id),
       commuterName: user!.name,
@@ -150,8 +157,15 @@ export default function CommuterScreen() {
       lng: userCoords.lng,
       announcedAt: Date.now(),
     });
+    setIsSharing(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setTimeout(() => setAnnouncingPosition(false), 3000);
+  }
+
+  function stopSharing() {
+    if (!socket) return;
+    socket.emit("commuter:remove", { commuterId: String(user!.id) });
+    setIsSharing(false);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   }
 
   function openRateDriver(d: DriverData) {
@@ -191,6 +205,10 @@ export default function CommuterScreen() {
         text: "Log Out",
         style: "destructive",
         onPress: async () => {
+          // Stop sharing before logout
+          if (isSharing && socket) {
+            socket.emit("commuter:remove", { commuterId: String(user!.id) });
+          }
           await logout();
           router.replace("/");
         },
@@ -244,20 +262,33 @@ export default function CommuterScreen() {
           <Feather name={mapExpanded ? "chevron-down" : "chevron-up"} size={18} color={colors.primary} />
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[s.announceBtn, announcingPosition && s.announceBtnActive]}
-          onPress={announcePosition}
-          activeOpacity={0.85}
-        >
-          <MaterialCommunityIcons
-            name={announcingPosition ? "map-marker-check" : "map-marker-radius"}
-            size={22}
-            color="#fff"
-          />
-          <Text style={s.announceBtnText}>
-            {announcingPosition ? "Announced!" : "Announce Position"}
-          </Text>
-        </TouchableOpacity>
+        {/* Announce / Stop sharing toggle */}
+        {isSharing ? (
+          <TouchableOpacity
+            style={s.stopShareBtn}
+            onPress={stopSharing}
+            activeOpacity={0.85}
+          >
+            <MaterialCommunityIcons name="map-marker-off" size={20} color="#fff" />
+            <Text style={s.announceBtnText}>Stop Sharing</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={s.announceBtn}
+            onPress={announcePosition}
+            activeOpacity={0.85}
+          >
+            <MaterialCommunityIcons name="map-marker-radius" size={20} color="#fff" />
+            <Text style={s.announceBtnText}>Announce Position</Text>
+          </TouchableOpacity>
+        )}
+
+        {isSharing && (
+          <View style={s.sharingBadge}>
+            <View style={s.sharingDot} />
+            <Text style={s.sharingText}>Sharing location</Text>
+          </View>
+        )}
       </View>
 
       <Animated.View style={[s.bottomPanel, { minHeight: panelHeight, paddingBottom: bottomPad + 8 }]}>
@@ -275,7 +306,6 @@ export default function CommuterScreen() {
                 ? calcDistance(userCoords.lat, userCoords.lng, d.lat, d.lng)
                 : null;
               const isSelected = selectedDriver?.driverId === d.driverId;
-              const isFleetDriver = !!d.driverId && d.driverName;
               return (
                 <TouchableOpacity
                   key={d.driverId}
@@ -333,6 +363,12 @@ export default function CommuterScreen() {
                 <Text style={s.roleBadgeText}>Commuter</Text>
               </View>
             </View>
+            {isSharing && (
+              <View style={s.profileSharingRow}>
+                <View style={s.sharingDot} />
+                <Text style={s.profileSharingText}>Your location is being shared with drivers</Text>
+              </View>
+            )}
             <TouchableOpacity style={s.modalClose} onPress={() => setShowProfile(false)}>
               <Text style={s.modalCloseText}>Close</Text>
             </TouchableOpacity>
@@ -442,8 +478,23 @@ function makeStyles(c: ReturnType<typeof useColors>) {
       shadowColor: "#000", shadowOffset: { width: 0, height: 3 },
       shadowOpacity: 0.25, shadowRadius: 8, elevation: 8,
     },
-    announceBtnActive: { backgroundColor: c.success },
+    stopShareBtn: {
+      position: "absolute", bottom: 12, right: 12,
+      backgroundColor: "#EF4444",
+      borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10,
+      flexDirection: "row", alignItems: "center", gap: 8,
+      shadowColor: "#000", shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.25, shadowRadius: 8, elevation: 8,
+    },
     announceBtnText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+    sharingBadge: {
+      position: "absolute", bottom: 56, right: 12,
+      flexDirection: "row", alignItems: "center", gap: 6,
+      backgroundColor: "rgba(255,255,255,0.92)", borderRadius: 20,
+      paddingHorizontal: 10, paddingVertical: 5,
+    },
+    sharingDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#22C55E" },
+    sharingText: { fontSize: 11, color: c.foreground, fontWeight: "600" },
     bottomPanel: {
       backgroundColor: c.background,
       paddingTop: 8,
@@ -504,6 +555,12 @@ function makeStyles(c: ReturnType<typeof useColors>) {
       paddingHorizontal: 10, paddingVertical: 5, marginTop: 4,
     },
     roleBadgeText: { fontSize: 12, fontWeight: "700", color: c.primary },
+    profileSharingRow: {
+      flexDirection: "row", alignItems: "center", gap: 8,
+      backgroundColor: "#F0FDF4", borderRadius: 12,
+      paddingHorizontal: 14, paddingVertical: 10, marginBottom: 16,
+    },
+    profileSharingText: { fontSize: 13, color: "#16A34A", fontWeight: "600" },
     modalClose: {
       backgroundColor: c.secondary, borderRadius: 14, padding: 14,
       alignItems: "center",

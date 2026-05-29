@@ -6,6 +6,7 @@ import faresRouter from "./fares";
 import reportsRouter from "./reports";
 import ratingsRouter from "./ratings";
 import fareSettingsRouter from "./fare_settings";
+import driverStatsRouter from "./driver_stats";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(faresRouter);
 router.use(reportsRouter);
 router.use(ratingsRouter);
 router.use(fareSettingsRouter);
+router.use(driverStatsRouter);
 
 export default router;
